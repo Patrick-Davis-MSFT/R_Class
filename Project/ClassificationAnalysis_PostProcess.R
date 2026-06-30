@@ -3,12 +3,13 @@ options(dplyr.summarise.inform = FALSE)
 thresholds <- c(0.50, 0.30, 0.20, 0.10)
 split <- 0.7
 useUpBalancing <- TRUE
+useRemoveAllNA <- FALSE
 
 # RDS Files
 dataDir <- "./Data/BankData/Processed"
 dataFiles <- list.files(dataDir, pattern = "\\.rds$", full.names = TRUE)
 
-out_dir <- "./Data/BankData/CalculationResults"
+out_dir <- paste0("./Data/BankData/CalculationResults", ifelse(useRemoveAllNA, "/DropNA", ""))
 if (!dir.exists(out_dir)) {
   dir.create(out_dir, recursive = TRUE)
 }
@@ -260,7 +261,12 @@ for (file in dataFiles) {
   validate_input_data(df_raw)
   cat(sprintf("Loaded rows: %d | columns: %d\n", nrow(df_raw), ncol(df_raw)))
   df_model <- prepare_model_frame(df_raw)
-  df_model <- dropMostNAColumn(df_model)
+  if (!useRemoveAllNA) {
+    print("Dropping columns with most NA values...")
+    df_model <- dropMostNAColumn(df_model)
+  } else {
+    print("Dropping ALL rows with NA values...")
+  }
   df_model <- naDroper(df_model)
 
   # split the data into train and test sets
@@ -280,6 +286,8 @@ for (file in dataFiles) {
     thresholds = thresholds,
     train_variant_label = "OriginalTrain"
   )
+
+  results_list <- list(result_original)
 
   if (useUpBalancing) {
     # Optional balanced-train branch
@@ -313,7 +321,11 @@ for (file in dataFiles) {
 
   roc_plot_df <- build_roc_plot_data(results_list)
 
-  base_name <- tools::file_path_sans_ext(basename(file))
+  base_name <- paste0(
+    tools::file_path_sans_ext(basename(file)),
+    ifelse(useUpBalancing, "_balanced", "_original"),
+    ifelse(useRemoveAllNA, "_DropNA", "")
+  )
 
   roc_plot <- ggplot2::ggplot(roc_plot_df, ggplot2::aes(x = FalsePositiveRate, y = TruePositiveRate, color = curve)) +
     ggplot2::geom_line(linewidth = 1) +
@@ -326,7 +338,7 @@ for (file in dataFiles) {
       color = "Model Variant"
     )
 
-  importance_table <- result_original$importance %>%
+  importance_table <- bind_rows(lapply(results_list, function(x) x$importance)) %>%
     arrange(consensus_rank, consensus_score)
 
   top_tree <- importance_table %>%
